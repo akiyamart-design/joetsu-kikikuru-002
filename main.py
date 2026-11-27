@@ -70,27 +70,21 @@ LEVEL_TO_COLOR = {
 }
 
 def format_dt_with_weekday(dt):
-    w = WEEKDAYS[dt.weekday()]
-    return dt.strftime(f"%Y-%m-%d %H:%M:%S ({w})")
+    return dt.strftime(f"%Y-%m-%d %H:%M:%S ({WEEKDAYS[dt.weekday()]})")
 
 def format_date_banner(dt):
-    w = WEEKDAYS[dt.weekday()]
-    return dt.strftime(f"━━ %Y-%m-%d ({w}) ━━")
+    return dt.strftime(f"━━ %Y-%m-%d ({WEEKDAYS[dt.weekday()]}) ━━")
 
 def parse_iso_datetime(iso_str):
     if not iso_str:
         return ""
     try:
-        dt = datetime.fromisoformat(iso_str)
-        return format_dt_with_weekday(dt.astimezone(JST))
+        return format_dt_with_weekday(datetime.fromisoformat(iso_str).astimezone(JST))
     except Exception:
         return iso_str
 
 def fetch_json_safely(urls):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json, text/plain, */*",
-    }
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
     for url in urls:
         safe_url = url.replace("https://jma.go.jp", "https://jma.go.jp")
         try:
@@ -115,7 +109,6 @@ def fetch_jma_data():
         active_warnings = []
         max_level = 0
         latest_report_time = ""
-
         cat_lv = {"land": 0, "inundation": 0, "flood": 0, "wind_wave": 0, "other": 0}
         cat_txt = {"land": "白", "inundation": "白", "flood": "白", "wind_wave": "白", "other": "白"}
 
@@ -198,12 +191,8 @@ def get_level_rank(color_text):
 def update_sheets_descending(data):
     creds_json = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
     sheet_id = os.environ["SPREADSHEET_ID"]
-
     g_host = "https://" + "www." + "googleapis.com"
-    scopes = [
-        g_host + "/auth/spreadsheets",
-        g_host + "/auth/drive",
-    ]
+    scopes = [g_host + "/auth/spreadsheets", g_host + "/auth/drive"]
     creds = Credentials.from_service_account_info(creds_json, scopes=scopes)
     gc = gspread.authorize(creds)
     spreadsheet = gc.open_by_key(sheet_id)
@@ -224,17 +213,16 @@ def update_sheets_descending(data):
             ], range_name="A1:K2")
 
         all_values = ws.get_all_values()
-        # 3行目以降（インデックス2以降）から、日付区切り行("━━"始まり)を除いた直近のデータ行を探す
         latest_data_row = None
         for r in all_values[2:]:
-            if r and r.copy().pop(0) and not r.copy().pop(0).startswith("━━"):
+            if r and r[0] and not r[0].startswith("━━"):
                 latest_data_row = r
                 break
 
         if latest_data_row and len(latest_data_row) >= 4:
-            prev_dt_str = latest_data_row.copy().pop(0)
-            prev_date_str = prev_dt_str[:10]  # "YYYY-MM-DD" を抽出
-            prev_color = latest_data_row.copy().pop(3)
+            prev_dt_str = latest_data_row[0]
+            prev_date_str = prev_dt_str[:10]
+            prev_color = latest_data_row[3]
             prev_rank = get_level_rank(prev_color)
             curr_rank = info["max_level_num"]
             if curr_rank > prev_rank:
@@ -248,8 +236,9 @@ def update_sheets_descending(data):
             prev_color = "初回取得"
             diff_text = "-"
 
-        new_row = [
-            now_str,
-            info["report_time"],
-            prev_color,
-            info["current_color"],
+        new_row = [now_str, info["report_time"], prev_color, info["current_color"], diff_text, info["land"], info["inundation"], info["flood"], info["wind_wave"], info["other"], info["warnings_text"]]
+
+        if prev_date_str and prev_date_str != today_date_str:
+            try:
+                banner_title = format_date_banner(datetime.strptime(prev_date_str, "%Y-%m-%d"))
+            except Exception:
