@@ -8,7 +8,6 @@ from google.oauth2.service_account import Credentials
 JST = timezone(timedelta(hours=+9), 'JST')
 WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
 
-# 気象庁コードとスプレッドシートのシート名の対応
 TARGET_CITIES = {
     "1522200": "上越市",
     "1521700": "妙高市",
@@ -26,7 +25,6 @@ FLOOD_URLS = [
     HOST + "/bosai/flood/data/flood_xml.json",
 ]
 
-# コード: (名称, 全体危険度Lv, カテゴリ, カテゴリ別表示)
 WARNING_CODES = {
     "33": ("レベル５大雨特別警報", 5, "inundation", "黒（Lv5特別警報）"),
     "39": ("レベル５土砂災害特別警報", 5, "land", "黒（Lv5特別警報）"),
@@ -114,17 +112,13 @@ def fetch_jma_data():
         max_level = 0
         latest_report_time = ""
 
-        cat_status = {
-            "land": (0, "白"),
-            "inundation": (0, "白"),
-            "flood": (0, "白"),
-            "wind_wave": (0, "白"),
-            "other": (0, "白"),
-        }
+        cat_lv = {"land": 0, "inundation": 0, "flood": 0, "wind_wave": 0, "other": 0}
+        cat_txt = {"land": "白", "inundation": "白", "flood": "白", "wind_wave": "白", "other": "白"}
 
         def update_category(cat, lv, label):
-            if lv > cat_status[cat][0]:
-                cat_status[cat] = (lv, label)
+            if lv > cat_lv[cat]:
+                cat_lv[cat] = lv
+                cat_txt[cat] = label
 
         for report in warn_reports:
             rep_time = report.get("reportDatetime", "")
@@ -181,11 +175,11 @@ def fetch_jma_data():
             "max_level_num": max_level,
             "current_color": LEVEL_TO_COLOR[max_level],
             "report_time": parse_iso_datetime(latest_report_time),
-            "land": cat_status["land"][1],
-            "inundation": cat_status["inundation"][1],
-            "flood": cat_status["flood"][1],
-            "wind_wave": cat_status["wind_wave"][1],
-            "other": cat_status["other"][1],
+            "land": cat_txt["land"],
+            "inundation": cat_txt["inundation"],
+            "flood": cat_txt["flood"],
+            "wind_wave": cat_txt["wind_wave"],
+            "other": cat_txt["other"],
             "warnings_text": "、".join(active_warnings) if active_warnings else "発表なし",
         }
     return results
@@ -218,14 +212,15 @@ def append_to_sheets(data):
             ws = spreadsheet.worksheet(city_name)
         except gspread.WorksheetNotFound:
             ws = spreadsheet.add_worksheet(title=city_name, rows=1000, cols=15)
-            ws.update("A1:K2", [
+            ws.update(values=[
                 [city_name, "", "", "", "", "", "", "", "", "", ""],
                 ["取得日時(曜日)", "発表日時(曜日)", "前回最大Lv", "今回最大Lv", "変動", "土砂Lv", "浸水Lv", "洪水Lv", "風・波Lv", "その他Lv", "発表内容詳細"]
-            ])
+            ], range_name="A1:K2")
 
         all_values = ws.get_all_values()
         if len(all_values) >= 3 and len(all_values[-1]) >= 4:
-            prev_color = all_values[-1][3]
+            last_row = all_values[-1]
+            prev_color = last_row.pop(3)
             prev_rank = get_level_rank(prev_color)
             curr_rank = info["max_level_num"]
             if curr_rank > prev_rank:
@@ -239,18 +234,23 @@ def append_to_sheets(data):
             diff_text = "-"
 
         row = [
-            now_str,                # A: 取得日時(曜日)
-            info["report_time"],    # B: 発表日時(曜日)
-            prev_color,             # C: 前回最大Lv
-            info["current_color"],  # D: 今回最大Lv
-            diff_text,              # E: 変動
-            info["land"],           # F: 土砂Lv
-            info["inundation"],     # G: 浸水Lv
-            info["flood"],          # H: 洪水Lv
-            info["wind_wave"],      # I: 風・波Lv
-            info["other"],          # J: その他Lv
-            info["warnings_text"],  # K: 発表内容詳細
+            now_str,
+            info["report_time"],
+            prev_color,
+            info["current_color"],
+            diff_text,
+            info["land"],
+            info["inundation"],
+            info["flood"],
+            info["wind_wave"],
+            info["other"],
+            info["warnings_text"],
         ]
 
         next_row = max(len(all_values) + 1, 3)
-        ws.update(f"A{next_row}:K{next_row}", [row], value_input_option="USER_ENTERED")
+        ws.update(values=[row], range_name=f"A{next_row}:K{next_row}", value_input_option="USER_ENTERED")
+        print(f"[{city_name}] シートの {next_row} 行目に書き込みました。")
+
+if __name__ == "__main__":
+    jma_data = fetch_jma_data()
+    append_to_sheets(jma_data)
