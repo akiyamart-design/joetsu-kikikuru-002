@@ -5,17 +5,14 @@ import requests
 import gspread
 from google.oauth2.service_account import Credentials
 
-# 日本時間 (JST)
 JST = timezone(timedelta(hours=+9), 'JST')
 
-# 対象3市の気象庁 class20s コード (7桁)
 TARGET_CITIES = {
     "1522200": "上越市",
     "1521700": "妙高市",
     "1521600": "糸魚川市",
 }
 
-# 気象庁 JSON URL候補 (新形式 r8 と 従来形式)
 HOST = "https://" + "www." + "jma.go.jp"
 
 WARNING_URLS = [
@@ -27,7 +24,6 @@ FLOOD_URLS = [
     HOST + "/bosai/flood/data/flood_xml.json",
 ]
 
-# 気象警報・注意報コード表
 WARNING_CODES = {
     "33": ("レベル５大雨特別警報", 5),
     "39": ("レベル５土砂災害特別警報", 5),
@@ -78,7 +74,6 @@ def fetch_json_safely(urls):
         "Accept": "application/json, text/plain, */*",
     }
     for url in urls:
-        # 念のため強制的に www. を付与する安全装置
         safe_url = url.replace("https://jma.go.jp", "https://jma.go.jp")
         try:
             res = requests.get(safe_url, headers=headers, timeout=15, allow_redirects=False)
@@ -88,15 +83,14 @@ def fetch_json_safely(urls):
         except Exception as e:
             print(f"Failed {safe_url}: {e}")
     return None
-    
+
 def fetch_jma_data():
     warn_data = fetch_json_safely(WARNING_URLS)
     if warn_data is None:
-        raise RuntimeError("気象庁の警報JSONを取得できませんでした。上のURLログを確認してください。")
+        raise RuntimeError("気象庁の警報JSONを取得できませんでした。")
 
     flood_data = fetch_json_safely(FLOOD_URLS) or []
 
-    # JSONがリスト形式(r8)か辞書形式(旧形式)かで処理を統一
     warn_reports = warn_data if isinstance(warn_data, list) else [warn_data]
     flood_reports = flood_data if isinstance(flood_data, list) else [flood_data]
 
@@ -106,10 +100,8 @@ def fetch_jma_data():
         max_level = 0
         latest_report_time = ""
 
-        # 1. 一般の警報・注意報を走査
         for report in warn_reports:
             rep_time = report.get("reportDatetime", "")
-            # r8形式(warning.class20Items) と 旧形式(areaTypes[1].areas) の両対応
             class20_items = report.get("warning", {}).get("class20Items", [])
             if not class20_items and "areaTypes" in report:
                 for at in report.get("areaTypes", []):
@@ -133,7 +125,6 @@ def fetch_jma_data():
                             if w_level > max_level:
                                 max_level = w_level
 
-        # 2. 河川氾濫情報を走査
         for f_rep in flood_reports:
             for item in f_rep.get("warning", {}).get("class20Items", []):
                 if item.get("areaCode") == code:
@@ -165,11 +156,10 @@ def append_to_sheet(data):
     creds_json = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
     sheet_id = os.environ["SPREADSHEET_ID"]
 
-            scopes = [
+    scopes = [
         "https://googleapis.com",
         "https://googleapis.com",
     ]
-
     creds = Credentials.from_service_account_info(creds_json, scopes=scopes)
     gc = gspread.authorize(creds)
     worksheet = gc.open_by_key(sheet_id).sheet1
