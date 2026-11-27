@@ -27,7 +27,6 @@ FLOOD_URLS = [
 ]
 
 # コード: (名称, 全体危険度Lv, カテゴリ, カテゴリ別表示)
-# カテゴリ: "land"(土砂), "inundation"(浸水), "flood"(洪水), "wind_wave"(風・波), "other"(その他)
 WARNING_CODES = {
     "33": ("レベル５大雨特別警報", 5, "inundation", "黒（Lv5特別警報）"),
     "39": ("レベル５土砂災害特別警報", 5, "land", "黒（Lv5特別警報）"),
@@ -115,7 +114,6 @@ def fetch_jma_data():
         max_level = 0
         latest_report_time = ""
 
-        # カテゴリ別 (レベル数値, 表示テキスト)
         cat_status = {
             "land": (0, "白"),
             "inundation": (0, "白"),
@@ -128,7 +126,6 @@ def fetch_jma_data():
             if lv > cat_status[cat][0]:
                 cat_status[cat] = (lv, label)
 
-        # 1. 警報・注意報走査
         for report in warn_reports:
             rep_time = report.get("reportDatetime", "")
             class20_items = report.get("warning", {}).get("class20Items", [])
@@ -156,7 +153,6 @@ def fetch_jma_data():
                             max_level = max(max_level, w_lv)
                             update_category(w_cat, w_lv, w_disp)
 
-        # 2. 河川氾濫情報走査（洪水Lvへ反映）
         for f_rep in flood_reports:
             for item in f_rep.get("warning", {}).get("class20Items", []):
                 if item.get("areaCode") == code:
@@ -218,14 +214,16 @@ def append_to_sheets(data):
 
     for code, city_name in TARGET_CITIES.items():
         info = data[code]
-        # 市町村名のシートを取得（なければ自動作成）
         try:
             ws = spreadsheet.worksheet(city_name)
         except gspread.WorksheetNotFound:
             ws = spreadsheet.add_worksheet(title=city_name, rows=1000, cols=15)
+            ws.update("A1:K2", [
+                [city_name, "", "", "", "", "", "", "", "", "", ""],
+                ["取得日時(曜日)", "発表日時(曜日)", "前回最大Lv", "今回最大Lv", "変動", "土砂Lv", "浸水Lv", "洪水Lv", "風・波Lv", "その他Lv", "発表内容詳細"]
+            ])
 
         all_values = ws.get_all_values()
-        # 3行目以降にデータがあれば最終行のD列（今回最大Lv）を「前回最大Lv」として取得
         if len(all_values) >= 3 and len(all_values[-1]) >= 4:
             prev_color = all_values[-1][3]
             prev_rank = get_level_rank(prev_color)
@@ -254,5 +252,5 @@ def append_to_sheets(data):
             info["warnings_text"],  # K: 発表内容詳細
         ]
 
-        # 3行目以降に追記（1〜2行目がタイトル・見出し行のため）
         next_row = max(len(all_values) + 1, 3)
+        ws.update(f"A{next_row}:K{next_row}", [row], value_input_option="USER_ENTERED")
