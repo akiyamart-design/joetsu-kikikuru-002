@@ -15,12 +15,17 @@ TARGET_CITIES = {
     "1521600": "糸魚川市",
 }
 
-# 新潟県 (150000) の警報・注意報JSON (2026年5月改定 r8形式)
-WARNING_URL = "https://www.jma.go.jp"
-# 河川氾濫（指定河川洪水予報）JSON
-FLOOD_URL = "https://www.jma.go.jp"
+# 気象庁 JSON URL候補 (新形式 r8 と 従来形式)
+WARNING_URLS = [
+    "https://jma.go.jp",
+    "https://jma.go.jp",
+]
+FLOOD_URLS = [
+    "https://jma.go.jp",
+    "https://jma.go.jp",
+]
 
-# 気象警報・注意報コード表 (r8形式)
+# 気象警報・注意報コード表
 WARNING_CODES = {
     "33": ("レベル５大雨特別警報", 5),
     "39": ("レベル５土砂災害特別警報", 5),
@@ -57,7 +62,6 @@ WARNING_CODES = {
     "26": ("着雪注意報", 0),
 }
 
-# 危険度レベル -> キキクル危険度色
 LEVEL_TO_COLOR = {
     5: "黒（災害切迫・Lv5相当）",
     4: "紫（危険・Lv4相当）",
@@ -66,20 +70,32 @@ LEVEL_TO_COLOR = {
     0: "白（危険度Lv2未満）",
 }
 
-def fetch_jma_data():
-    headers = {"User-Agent": "JMA-Alert-Tracker/1.0"}
-    res_warn = requests.get(WARNING_URL, headers=headers, timeout=15)
-    res_warn.raise_for_status()
-    warn_reports = res_warn.json()
+def fetch_json_safely(urls):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Referer": "https://jma.go.jp",
+    }
+    for url in urls:
+        try:
+            res = requests.get(url, headers=headers, timeout=15)
+            print(f"URL: {url} -> Status: {res.status_code}, Length: {len(res.text)}")
+            if res.status_code == 200 and res.text.strip():
+                return res.json()
+        except Exception as e:
+            print(f"Failed {url}: {e}")
+    return None
 
-    # 氾濫情報も取得（エラー時は空リスト扱い）
-    flood_reports = []
-    try:
-        res_flood = requests.get(FLOOD_URL, headers=headers, timeout=15)
-        if res_flood.status_code == 200:
-            flood_reports = res_flood.json()
-    except Exception:
-        pass
+def fetch_jma_data():
+    warn_data = fetch_json_safely(WARNING_URLS)
+    if warn_data is None:
+        raise RuntimeError("気象庁の警報JSONを取得できませんでした。上のURLログを確認してください。")
+
+    flood_data = fetch_json_safely(FLOOD_URLS) or []
+
+    # JSONがリスト形式(r8)か辞書形式(旧形式)かで処理を統一
+    warn_reports = warn_data if isinstance(warn_data, list) else [warn_data]
+    flood_reports = flood_data if isinstance(flood_data, list) else [flood_data]
 
     results = {}
     for code, city_name in TARGET_CITIES.items():
@@ -87,17 +103,23 @@ def fetch_jma_data():
         max_level = 0
         latest_report_time = ""
 
-        # 1. 一般の警報・注意報 (VPWW55〜61) を全報走査
+        # 1. 一般の警報・注意報を走査
         for report in warn_reports:
             rep_time = report.get("reportDatetime", "")
+            # r8形式(warning.class20Items) と 旧形式(areaTypes[1].areas) の両対応
             class20_items = report.get("warning", {}).get("class20Items", [])
+            if not class20_items and "areaTypes" in report:
+                for at in report.get("areaTypes", []):
+                    for area in at.get("areas", []):
+                        if area.get("code") == code:
+                            class20_items.append({"areaCode": code, "kinds": area.get("warnings", [])})
+
             for item in class20_items:
                 if item.get("areaCode") == code:
                     if rep_time > latest_report_time:
                         latest_report_time = rep_time
                     for kind in item.get("kinds", []):
                         status = kind.get("status", "")
-                        # 「発表」「継続」のみ抽出（「解除」は除外）
                         if status in ("発表", "継続"):
                             w_code = kind.get("code", "")
                             w_name, w_level = WARNING_CODES.get(w_code, (f"不明コード({w_code})", 0))
@@ -108,14 +130,13 @@ def fetch_jma_data():
                             if w_level > max_level:
                                 max_level = w_level
 
-        # 2. 河川氾濫情報 (flood_xml.json) の該当市町村走査
-        for f_rep in flood_reports if isinstance(flood_reports, list) else []:
+        # 2. 河川氾濫情報を走査
+        for f_rep in flood_reports:
             for item in f_rep.get("warning", {}).get("class20Items", []):
                 if item.get("areaCode") == code:
                     for kind in item.get("kinds", []):
                         if kind.get("status") in ("発表", "継続"):
                             f_code = kind.get("code", "")
-                            # 氾濫コード: 30=Lv5氾濫特別警報, 40=Lv4氾濫危険警報, 01=Lv3氾濫警報, 20-22=Lv2氾濫注意報
                             if f_code == "30":
                                 active_warnings.append("レベル５氾濫特別警報")
                                 max_level = max(max_level, 5)
@@ -146,7 +167,6 @@ def append_to_sheet(data):
     gc = gspread.authorize(creds)
     worksheet = gc.open_by_key(sheet_id).sheet1
 
-    # 1行目が空ならヘッダーを追加
     if not worksheet.row_values(1):
         worksheet.append_row([
             "取得日時(JST)",
@@ -169,6 +189,7 @@ def append_to_sheet(data):
         ])
 
     worksheet.append_rows(rows, value_input_option="USER_ENTERED")
+    print("スプレッドシートへの書き込みが完了しました！")
 
 if __name__ == "__main__":
     jma_data = fetch_jma_data()
