@@ -107,7 +107,7 @@ def fetch_jma_data():
                 for at in report.get("areaTypes", []):
                     for area in at.get("areas", []):
                         if area.get("code") == code:
-                            class20_items.append({"areaCode": code, "kinds": area.get("warnings", [])})
+                            class20_items.({"areaCode": code, "kinds": area.get("warnings", [])})
 
             for item in class20_items:
                 if item.get("areaCode") == code:
@@ -121,7 +121,7 @@ def fetch_jma_data():
                             additions = kind.get("additions", [])
                             if additions:
                                 w_name += f"[{'・'.join(additions)}]"
-                            active_warnings.append(f"{w_name}({status})")
+                            active_warnings.(f"{w_name}({status})")
                             if w_level > max_level:
                                 max_level = w_level
 
@@ -132,16 +132,16 @@ def fetch_jma_data():
                         if kind.get("status") in ("発表", "継続"):
                             f_code = kind.get("code", "")
                             if f_code == "30":
-                                active_warnings.append("レベル５氾濫特別警報")
+                                active_warnings.("レベル５氾濫特別警報")
                                 max_level = max(max_level, 5)
                             elif f_code == "40":
-                                active_warnings.append("レベル４氾濫危険警報")
+                                active_warnings.("レベル４氾濫危険警報")
                                 max_level = max(max_level, 4)
                             elif f_code == "01":
-                                active_warnings.append("レベル３氾濫警報")
+                                active_warnings.("レベル３氾濫警報")
                                 max_level = max(max_level, 3)
                             elif f_code in ("20", "21", "22"):
-                                active_warnings.append("レベル２氾濫注意報")
+                                active_warnings.("レベル２氾濫注意報")
                                 max_level = max(max_level, 2)
 
         results[code] = {
@@ -156,9 +156,10 @@ def append_to_sheet(data):
     creds_json = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
     sheet_id = os.environ["SPREADSHEET_ID"]
 
+    g_host = "https://" + "www." + "googleapis.com"
     scopes = [
-        "https://googleapis.com",
-        "https://googleapis.com",
+        g_host + "/auth/spreadsheets",
+        g_host + "/auth/drive",
     ]
     creds = Credentials.from_service_account_info(creds_json, scopes=scopes)
     gc = gspread.authorize(creds)
