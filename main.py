@@ -107,7 +107,7 @@ def fetch_jma_data():
                 for at in report.get("areaTypes", []):
                     for area in at.get("areas", []):
                         if area.get("code") == code:
-                            class20_items.({"areaCode": code, "kinds": area.get("warnings", [])})
+                            class20_items.append({"areaCode": code, "kinds": area.get("warnings", [])})
 
             for item in class20_items:
                 if item.get("areaCode") == code:
