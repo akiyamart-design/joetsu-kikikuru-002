@@ -126,7 +126,8 @@ def rank_of(txt):
 
 def main():
     data = get_data()
-    creds = Credentials.from_service_account_info(json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"]), scopes=["https://googleapis.com", "https://googleapis.com"])
+    g_host = "https://" + "www." + "googleapis.com"
+    creds = Credentials.from_service_account_info(json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"]), scopes=[g_host + "/auth/spreadsheets", g_host + "/auth/drive"])
     ss = gspread.authorize(creds).open_by_key(os.environ["SPREADSHEET_ID"])
     now = datetime.now(JST)
     now_str, today_str = fmt_dt(now), now.strftime("%Y-%m-%d")
