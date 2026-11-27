@@ -16,13 +16,15 @@ TARGET_CITIES = {
 }
 
 # 気象庁 JSON URL候補 (新形式 r8 と 従来形式)
+HOST = "https://" + "www." + "jma.go.jp"
+
 WARNING_URLS = [
-    "https://jma.go.jp",
-    "https://jma.go.jp",
+    HOST + "/bosai/warning/data/r8/150000.json",
+    HOST + "/bosai/warning/data/warning/150000.json",
 ]
 FLOOD_URLS = [
-    "https://jma.go.jp",
-    "https://jma.go.jp",
+    HOST + "/bosai/flood/data/r8/flood_xml.json",
+    HOST + "/bosai/flood/data/flood_xml.json",
 ]
 
 # 気象警報・注意報コード表
