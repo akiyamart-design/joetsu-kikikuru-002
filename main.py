@@ -1,29 +1,14 @@
-import os
-import json
+import os, json, requests, gspread
 from datetime import datetime, timezone, timedelta
-import requests
-import gspread
 from google.oauth2.service_account import Credentials
 
 JST = timezone(timedelta(hours=+9), 'JST')
 WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"]
-
-TARGET_CITIES = {
-    "1522200": "上越市",
-    "1521700": "妙高市",
-    "1521600": "糸魚川市",
-}
+TARGET_CITIES = {"1522200": "上越市", "1521700": "妙高市", "1521600": "糸魚川市"}
 
 HOST = "https://" + "www." + "jma.go.jp"
-
-WARNING_URLS = [
-    HOST + "/bosai/warning/data/r8/150000.json",
-    HOST + "/bosai/warning/data/warning/150000.json",
-]
-FLOOD_URLS = [
-    HOST + "/bosai/flood/data/r8/flood_xml.json",
-    HOST + "/bosai/flood/data/flood_xml.json",
-]
+WARNING_URLS = [HOST + "/bosai/warning/data/r8/150000.json", HOST + "/bosai/warning/data/warning/150000.json"]
+FLOOD_URLS = [HOST + "/bosai/flood/data/r8/flood_xml.json", HOST + "/bosai/flood/data/flood_xml.json"]
 
 WARNING_CODES = {
     "33": ("レベル５大雨特別警報", 5, "inundation", "黒（Lv5特別警報）"),
@@ -60,185 +45,119 @@ WARNING_CODES = {
     "25": ("着氷注意報", 2, "other", "黄（注意報）"),
     "26": ("着雪注意報", 2, "other", "黄（注意報）"),
 }
+LEVEL_TO_COLOR = {5: "黒（災害切迫・Lv5相当）", 4: "紫（危険・Lv4相当）", 3: "赤（警戒・Lv3相当）", 2: "黄（注意・Lv2相当）", 0: "白（危険度Lv2未満）"}
 
-LEVEL_TO_COLOR = {
-    5: "黒（災害切迫・Lv5相当）",
-    4: "紫（危険・Lv4相当）",
-    3: "赤（警戒・Lv3相当）",
-    2: "黄（注意・Lv2相当）",
-    0: "白（危険度Lv2未満）",
-}
-
-def format_dt_with_weekday(dt):
+def fmt_dt(dt):
     return dt.strftime(f"%Y-%m-%d %H:%M:%S ({WEEKDAYS[dt.weekday()]})")
 
-def format_date_banner(dt):
-    return dt.strftime(f"━━ %Y-%m-%d ({WEEKDAYS[dt.weekday()]}) ━━")
-
-def parse_iso_datetime(iso_str):
-    if not iso_str:
-        return ""
+def parse_iso(s):
     try:
-        return format_dt_with_weekday(datetime.fromisoformat(iso_str).astimezone(JST))
+        return fmt_dt(datetime.fromisoformat(s).astimezone(JST)) if s else ""
     except Exception:
-        return iso_str
+        return s
 
-def fetch_json_safely(urls):
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+def fetch_json(urls):
     for url in urls:
-        safe_url = url.replace("https://jma.go.jp", "https://jma.go.jp")
+        u = url.replace("https://jma.go.jp", "https://jma.go.jp")
         try:
-            res = requests.get(safe_url, headers=headers, timeout=15, allow_redirects=False)
-            if res.status_code == 200 and res.text.strip():
-                return res.json()
-        except Exception as e:
-            print(f"Failed {safe_url}: {e}")
+            r = requests.get(u, headers={"User-Agent": "Mozilla/5.0"}, timeout=15, allow_redirects=False)
+            if r.status_code == 200 and r.text.strip():
+                return r.json()
+        except Exception:
+            pass
     return None
 
-def fetch_jma_data():
-    warn_data = fetch_json_safely(WARNING_URLS)
-    if warn_data is None:
-        raise RuntimeError("気象庁の警報JSONを取得できませんでした。")
+def get_data():
+    w_data = fetch_json(WARNING_URLS)
+    if w_data is None:
+        raise RuntimeError("気象庁JSON取得失敗")
+    f_data = fetch_json(FLOOD_URLS) or []
+    w_reps = w_data if isinstance(w_data, list) else [w_data]
+    f_reps = f_data if isinstance(f_data, list) else [f_data]
 
-    flood_data = fetch_json_safely(FLOOD_URLS) or []
-    warn_reports = warn_data if isinstance(warn_data, list) else [warn_data]
-    flood_reports = flood_data if isinstance(flood_data, list) else [flood_data]
+    res = {}
+    for code, city in TARGET_CITIES.items():
+        warns, max_lv, rep_t = [], 0, ""
+        c_lv = {"land": 0, "inundation": 0, "flood": 0, "wind_wave": 0, "other": 0}
+        c_txt = {"land": "白", "inundation": "白", "flood": "白", "wind_wave": "白", "other": "白"}
 
-    results = {}
-    for code, city_name in TARGET_CITIES.items():
-        active_warnings = []
-        max_level = 0
-        latest_report_time = ""
-        cat_lv = {"land": 0, "inundation": 0, "flood": 0, "wind_wave": 0, "other": 0}
-        cat_txt = {"land": "白", "inundation": "白", "flood": "白", "wind_wave": "白", "other": "白"}
+        for rep in w_reps:
+            rt = rep.get("reportDatetime", "")
+            items = rep.get("warning", {}).get("class20Items", [])
+            if not items and "areaTypes" in rep:
+                for at in rep.get("areaTypes", []):
+                    for a in at.get("areas", []):
+                        if a.get("code") == code:
+                            items += [{"areaCode": code, "kinds": a.get("warnings", [])}]
+            for it in items:
+                if it.get("areaCode") == code:
+                    rep_t = max(rep_t, rt)
+                    for k in it.get("kinds", []):
+                        st = k.get("status", "")
+                        if st in ("発表", "継続"):
+                            wn, lv, cat, disp = WARNING_CODES.get(k.get("code", ""), ("不明", 2, "other", "黄"))
+                            warns += [f"{wn}({st})"]
+                            max_lv = max(max_lv, lv)
+                            if lv > c_lv[cat]:
+                                c_lv[cat], c_txt[cat] = lv, disp
 
-        def update_category(cat, lv, label):
-            if lv > cat_lv[cat]:
-                cat_lv[cat] = lv
-                cat_txt[cat] = label
+        for fr in f_reps:
+            for it in fr.get("warning", {}).get("class20Items", []):
+                if it.get("areaCode") == code:
+                    for k in it.get("kinds", []):
+                        if k.get("status") in ("発表", "継続"):
+                            fc = k.get("code", "")
+                            f_map = {"30": ("レベル５氾濫特別警報", 5, "黒（Lv5特別警報）"), "40": ("レベル４氾濫危険警報", 4, "紫（Lv4危険警報）"), "01": ("レベル３氾濫警報", 3, "赤（Lv3警報）"), "20": ("レベル２氾濫注意報", 2, "黄（Lv2注意報）"), "21": ("レベル２氾濫注意報", 2, "黄（Lv2注意報）"), "22": ("レベル２氾濫注意報", 2, "黄（Lv2注意報）")}
+                            if fc in f_map:
+                                wn, lv, disp = f_map[fc]
+                                warns += [wn]
+                                max_lv = max(max_lv, lv)
+                                if lv > c_lv["flood"]:
+                                    c_lv["flood"], c_txt["flood"] = lv, disp
 
-        for report in warn_reports:
-            rep_time = report.get("reportDatetime", "")
-            class20_items = report.get("warning", {}).get("class20Items", [])
-            if not class20_items and "areaTypes" in report:
-                for at in report.get("areaTypes", []):
-                    for area in at.get("areas", []):
-                        if area.get("code") == code:
-                            class20_items += [{"areaCode": code, "kinds": area.get("warnings", [])}]
+        res[code] = {"max_lv": max_lv, "color": LEVEL_TO_COLOR[max_lv], "rep_t": parse_iso(rep_t), "c": c_txt, "text": "、".join(warns) if warns else "発表なし"}
+    return res
 
-            for item in class20_items:
-                if item.get("areaCode") == code:
-                    if rep_time > latest_report_time:
-                        latest_report_time = rep_time
-                    for kind in item.get("kinds", []):
-                        status = kind.get("status", "")
-                        if status in ("発表", "継続"):
-                            w_code = kind.get("code", "")
-                            w_name, w_lv, w_cat, w_disp = WARNING_CODES.get(
-                                w_code, (f"不明({w_code})", 2, "other", "黄")
-                            )
-                            additions = kind.get("additions", [])
-                            if additions:
-                                w_name += f"[{'・'.join(additions)}]"
-                            active_warnings += [f"{w_name}({status})"]
-                            max_level = max(max_level, w_lv)
-                            update_category(w_cat, w_lv, w_disp)
-
-        for f_rep in flood_reports:
-            for item in f_rep.get("warning", {}).get("class20Items", []):
-                if item.get("areaCode") == code:
-                    for kind in item.get("kinds", []):
-                        if kind.get("status") in ("発表", "継続"):
-                            f_code = kind.get("code", "")
-                            if f_code == "30":
-                                active_warnings += ["レベル５氾濫特別警報"]
-                                max_level = max(max_level, 5)
-                                update_category("flood", 5, "黒（Lv5特別警報）")
-                            elif f_code == "40":
-                                active_warnings += ["レベル４氾濫危険警報"]
-                                max_level = max(max_level, 4)
-                                update_category("flood", 4, "紫（Lv4危険警報）")
-                            elif f_code == "01":
-                                active_warnings += ["レベル３氾濫警報"]
-                                max_level = max(max_level, 3)
-                                update_category("flood", 3, "赤（Lv3警報）")
-                            elif f_code in ("20", "21", "22"):
-                                active_warnings += ["レベル２氾濫注意報"]
-                                max_level = max(max_level, 2)
-                                update_category("flood", 2, "黄（Lv2注意報）")
-
-        results[code] = {
-            "city": city_name,
-            "max_level_num": max_level,
-            "current_color": LEVEL_TO_COLOR[max_level],
-            "report_time": parse_iso_datetime(latest_report_time),
-            "land": cat_txt["land"],
-            "inundation": cat_txt["inundation"],
-            "flood": cat_txt["flood"],
-            "wind_wave": cat_txt["wind_wave"],
-            "other": cat_txt["other"],
-            "warnings_text": "、".join(active_warnings) if active_warnings else "発表なし",
-        }
-    return results
-
-def get_level_rank(color_text):
-    if color_text.startswith("黒"): return 5
-    if color_text.startswith("紫"): return 4
-    if color_text.startswith("赤"): return 3
-    if color_text.startswith("黄"): return 2
+def rank_of(txt):
+    for k, v in [("黒", 5), ("紫", 4), ("赤", 3), ("黄", 2)]:
+        if txt.startswith(k):
+            return v
     return 0
 
-def update_sheets_descending(data):
-    creds_json = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
-    sheet_id = os.environ["SPREADSHEET_ID"]
-    g_host = "https://" + "www." + "googleapis.com"
-    scopes = [g_host + "/auth/spreadsheets", g_host + "/auth/drive"]
-    creds = Credentials.from_service_account_info(creds_json, scopes=scopes)
-    gc = gspread.authorize(creds)
-    spreadsheet = gc.open_by_key(sheet_id)
+def main():
+    data = get_data()
+    creds = Credentials.from_service_account_info(json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"]), scopes=["https://googleapis.com", "https://googleapis.com"])
+    ss = gspread.authorize(creds).open_by_key(os.environ["SPREADSHEET_ID"])
+    now = datetime.now(JST)
+    now_str, today_str = fmt_dt(now), now.strftime("%Y-%m-%d")
 
-    now_dt = datetime.now(JST)
-    now_str = format_dt_with_weekday(now_dt)
-    today_date_str = now_dt.strftime("%Y-%m-%d")
-
-    for code, city_name in TARGET_CITIES.items():
+    for code, city in TARGET_CITIES.items():
         info = data[code]
         try:
-            ws = spreadsheet.worksheet(city_name)
+            ws = ss.worksheet(city)
         except gspread.WorksheetNotFound:
-            ws = spreadsheet.add_worksheet(title=city_name, rows=1000, cols=15)
-            ws.update(values=[
-                [city_name, "", "", "", "", "", "", "", "", "", ""],
-                ["取得日時(曜日)", "発表日時(曜日)", "前回最大Lv", "今回最大Lv", "変動", "土砂Lv", "浸水Lv", "洪水Lv", "風・波Lv", "その他Lv", "発表内容詳細"]
-            ], range_name="A1:K2")
+            ws = ss.add_worksheet(title=city, rows=1000, cols=15)
+            ws.update(values=[[city] + [""]*10, ["取得日時(曜日)", "発表日時(曜日)", "前回最大Lv", "今回最大Lv", "変動", "土砂Lv", "浸水Lv", "洪水Lv", "風・波Lv", "その他Lv", "発表内容詳細"]], range_name="A1:K2")
 
-        all_values = ws.get_all_values()
-        latest_data_row = None
-        for r in all_values[2:]:
-            if r and r[0] and not r[0].startswith("━━"):
-                latest_data_row = r
-                break
-
-        if latest_data_row and len(latest_data_row) >= 4:
-            prev_dt_str = latest_data_row[0]
-            prev_date_str = prev_dt_str[:10]
-            prev_color = latest_data_row[3]
-            prev_rank = get_level_rank(prev_color)
-            curr_rank = info["max_level_num"]
-            if curr_rank > prev_rank:
-                diff_text = "▲ 警戒上昇"
-            elif curr_rank < prev_rank:
-                diff_text = "▼ 警戒低下"
-            else:
-                diff_text = "変動なし"
+        rows = ws.get_all_values()
+        last = next((r for r in rows[2:] if r and r[0] and not r[0].startswith("━━")), None)
+        if last and len(last) >= 4:
+            prev_date, prev_col = last[0][:10], last[3]
+            diff = "▲ 警戒上昇" if info["max_lv"] > rank_of(prev_col) else ("▼ 警戒低下" if info["max_lv"] < rank_of(prev_col) else "変動なし")
         else:
-            prev_date_str = ""
-            prev_color = "初回取得"
-            diff_text = "-"
+            prev_date, prev_col, diff = "", "初回取得", "-"
 
-        new_row = [now_str, info["report_time"], prev_color, info["current_color"], diff_text, info["land"], info["inundation"], info["flood"], info["wind_wave"], info["other"], info["warnings_text"]]
+        if prev_date and prev_date != today_str:
+            d_obj = datetime.strptime(prev_date, "%Y-%m-%d")
+            banner = d_obj.strftime(f"━━ %Y-%m-%d ({WEEKDAYS[d_obj.weekday()]}) ━━")
+            ws.insert_row([banner] + [""]*10, index=3, value_input_option="USER_ENTERED")
+            ws.format("A3:K3", {"backgroundColor": {"red": 0.90, "green": 0.92, "blue": 0.95}, "textFormat": {"bold": True}})
 
-        if prev_date_str and prev_date_str != today_date_str:
-            try:
-                banner_title = format_date_banner(datetime.strptime(prev_date_str, "%Y-%m-%d"))
-            except Exception:
+        c = info["c"]
+        new_row = [now_str, info["rep_t"], prev_col, info["color"], diff, c["land"], c["inundation"], c["flood"], c["wind_wave"], c["other"], info["text"]]
+        ws.insert_row(new_row, index=3, value_input_option="USER_ENTERED")
+        ws.format("A3:K3", {"backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "textFormat": {"bold": False}})
+        print(f"[{city}] 完了")
+
+if __name__ == "__main__":
+    main()
