@@ -72,20 +72,21 @@ LEVEL_TO_COLOR = {
 
 def fetch_json_safely(urls):
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Referer": "https://jma.go.jp",
     }
     for url in urls:
+        # 念のため強制的に www. を付与する安全装置
+        safe_url = url.replace("https://jma.go.jp", "https://jma.go.jp")
         try:
-            res = requests.get(url, headers=headers, timeout=15)
-            print(f"URL: {url} -> Status: {res.status_code}, Length: {len(res.text)}")
+            res = requests.get(safe_url, headers=headers, timeout=15, allow_redirects=False)
+            print(f"URL: {safe_url} -> Status: {res.status_code}, Length: {len(res.text)}")
             if res.status_code == 200 and res.text.strip():
                 return res.json()
         except Exception as e:
-            print(f"Failed {url}: {e}")
+            print(f"Failed {safe_url}: {e}")
     return None
-
+    
 def fetch_jma_data():
     warn_data = fetch_json_safely(WARNING_URLS)
     if warn_data is None:
