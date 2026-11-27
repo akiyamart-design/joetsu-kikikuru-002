@@ -73,6 +73,10 @@ def format_dt_with_weekday(dt):
     w = WEEKDAYS[dt.weekday()]
     return dt.strftime(f"%Y-%m-%d %H:%M:%S ({w})")
 
+def format_date_banner(dt):
+    w = WEEKDAYS[dt.weekday()]
+    return dt.strftime(f"━━ %Y-%m-%d ({w}) ━━")
+
 def parse_iso_datetime(iso_str):
     if not iso_str:
         return ""
@@ -191,7 +195,7 @@ def get_level_rank(color_text):
     if color_text.startswith("黄"): return 2
     return 0
 
-def append_to_sheets(data):
+def update_sheets_descending(data):
     creds_json = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
     sheet_id = os.environ["SPREADSHEET_ID"]
 
@@ -204,7 +208,9 @@ def append_to_sheets(data):
     gc = gspread.authorize(creds)
     spreadsheet = gc.open_by_key(sheet_id)
 
-    now_str = format_dt_with_weekday(datetime.now(JST))
+    now_dt = datetime.now(JST)
+    now_str = format_dt_with_weekday(now_dt)
+    today_date_str = now_dt.strftime("%Y-%m-%d")
 
     for code, city_name in TARGET_CITIES.items():
         info = data[code]
@@ -218,9 +224,17 @@ def append_to_sheets(data):
             ], range_name="A1:K2")
 
         all_values = ws.get_all_values()
-        if len(all_values) >= 3 and len(all_values[-1]) >= 4:
-            last_row = all_values[-1]
-            prev_color = last_row.pop(3)
+        # 3行目以降（インデックス2以降）から、日付区切り行("━━"始まり)を除いた直近のデータ行を探す
+        latest_data_row = None
+        for r in all_values[2:]:
+            if r and r.copy().pop(0) and not r.copy().pop(0).startswith("━━"):
+                latest_data_row = r
+                break
+
+        if latest_data_row and len(latest_data_row) >= 4:
+            prev_dt_str = latest_data_row.copy().pop(0)
+            prev_date_str = prev_dt_str[:10]  # "YYYY-MM-DD" を抽出
+            prev_color = latest_data_row.copy().pop(3)
             prev_rank = get_level_rank(prev_color)
             curr_rank = info["max_level_num"]
             if curr_rank > prev_rank:
@@ -230,27 +244,12 @@ def append_to_sheets(data):
             else:
                 diff_text = "変動なし"
         else:
+            prev_date_str = ""
             prev_color = "初回取得"
             diff_text = "-"
 
-        row = [
+        new_row = [
             now_str,
             info["report_time"],
             prev_color,
             info["current_color"],
-            diff_text,
-            info["land"],
-            info["inundation"],
-            info["flood"],
-            info["wind_wave"],
-            info["other"],
-            info["warnings_text"],
-        ]
-
-        next_row = max(len(all_values) + 1, 3)
-        ws.update(values=[row], range_name=f"A{next_row}:K{next_row}", value_input_option="USER_ENTERED")
-        print(f"[{city_name}] シートの {next_row} 行目に書き込みました。")
-
-if __name__ == "__main__":
-    jma_data = fetch_jma_data()
-    append_to_sheets(jma_data)
