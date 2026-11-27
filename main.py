@@ -165,7 +165,11 @@ def append_to_sheet(data):
     creds_json = json.loads(os.environ["GCP_SERVICE_ACCOUNT_JSON"])
     sheet_id = os.environ["SPREADSHEET_ID"]
 
-        scopes = ["https://googleapis.com"]
+            scopes = [
+        "https://googleapis.com",
+        "https://googleapis.com",
+    ]
+
     creds = Credentials.from_service_account_info(creds_json, scopes=scopes)
     gc = gspread.authorize(creds)
     worksheet = gc.open_by_key(sheet_id).sheet1
