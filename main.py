@@ -16,9 +16,9 @@ TARGET_CITIES = {
 }
 
 # 新潟県 (150000) の警報・注意報JSON (2026年5月改定 r8形式)
-WARNING_URL = "https://jma.go.jp"
+WARNING_URL = "https://www.jma.go.jp"
 # 河川氾濫（指定河川洪水予報）JSON
-FLOOD_URL = "https://jma.go.jp"
+FLOOD_URL = "https://www.jma.go.jp"
 
 # 気象警報・注意報コード表 (r8形式)
 WARNING_CODES = {
