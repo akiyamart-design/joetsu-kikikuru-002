@@ -56,6 +56,12 @@ def parse_iso(s):
     except Exception:
         return s
 
+def pick(seq, idx, default=""):
+    for i, v in enumerate(seq):
+        if i == idx:
+            return v
+    return default
+
 def fetch_json(urls):
     for url in urls:
         u = url.replace("https://jma.go.jp", "https://jma.go.jp")
@@ -124,6 +130,21 @@ def rank_of(txt):
             return v
     return 0
 
+def cell_style(val):
+    if val.startswith("黒"):
+        return {"backgroundColor": {"red": 0.12, "green": 0.12, "blue": 0.15}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}}
+    if val.startswith("紫"):
+        return {"backgroundColor": {"red": 0.65, "green": 0.15, "blue": 0.65}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}}
+    if val.startswith("赤"):
+        return {"backgroundColor": {"red": 0.92, "green": 0.20, "blue": 0.18}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}}
+    if val.startswith("黄"):
+        return {"backgroundColor": {"red": 1.0, "green": 0.93, "blue": 0.25}, "textFormat": {"foregroundColor": {"red": 0.1, "green": 0.1, "blue": 0.1}, "bold": True}}
+    if val.startswith("▲"):
+        return {"backgroundColor": {"red": 1.0, "green": 0.85, "blue": 0.70}, "textFormat": {"foregroundColor": {"red": 0.7, "green": 0.1, "blue": 0.0}, "bold": True}}
+    if val.startswith("▼"):
+        return {"backgroundColor": {"red": 0.82, "green": 0.93, "blue": 1.0}, "textFormat": {"foregroundColor": {"red": 0.0, "green": 0.3, "blue": 0.6}, "bold": True}}
+    return {"backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "textFormat": {"foregroundColor": {"red": 0.0, "green": 0.0, "blue": 0.0}, "bold": False}}
+
 def main():
     data = get_data()
     g_host = "https://" + "www." + "googleapis.com"
@@ -141,9 +162,9 @@ def main():
             ws.update(values=[[city] + [""]*10, ["取得日時(曜日)", "発表日時(曜日)", "前回最大Lv", "今回最大Lv", "変動", "土砂Lv", "浸水Lv", "洪水Lv", "風・波Lv", "その他Lv", "発表内容詳細"]], range_name="A1:K2")
 
         rows = ws.get_all_values()
-        last = next((r for r in rows[2:] if r and r[0] and not r[0].startswith("━━")), None)
+        last = next((r for r in rows[2:] if pick(r, 0) and not pick(r, 0).startswith("━━")), None)
         if last and len(last) >= 4:
-            prev_date, prev_col = last[0][:10], last[3]
+            prev_date, prev_col = pick(last, 0)[:10], pick(last, 3)
             diff = "▲ 警戒上昇" if info["max_lv"] > rank_of(prev_col) else ("▼ 警戒低下" if info["max_lv"] < rank_of(prev_col) else "変動なし")
         else:
             prev_date, prev_col, diff = "", "初回取得", "-"
@@ -152,13 +173,16 @@ def main():
             d_obj = datetime.strptime(prev_date, "%Y-%m-%d")
             banner = d_obj.strftime(f"━━ %Y-%m-%d ({WEEKDAYS[d_obj.weekday()]}) ━━")
             ws.insert_row([banner] + [""]*10, index=3, value_input_option="USER_ENTERED")
-            ws.format("A3:K3", {"backgroundColor": {"red": 0.90, "green": 0.92, "blue": 0.95}, "textFormat": {"bold": True}})
+            ws.format("A3:K3", {"backgroundColor": {"red": 0.90, "green": 0.92, "blue": 0.95}, "textFormat": {"foregroundColor": {"red": 0.0, "green": 0.0, "blue": 0.0}, "bold": True}})
 
         c = info["c"]
         new_row = [now_str, info["rep_t"], prev_col, info["color"], diff, c["land"], c["inundation"], c["flood"], c["wind_wave"], c["other"], info["text"]]
         ws.insert_row(new_row, index=3, value_input_option="USER_ENTERED")
-        ws.format("A3:K3", {"backgroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "textFormat": {"bold": False}})
-        print(f"[{city}] 完了")
+
+        cols = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]
+        fmt_reqs = [{"range": f"{col}3", "format": cell_style(val)} for col, val in zip(cols, new_row)]
+        ws.batch_format(fmt_reqs)
+        print(f"[{city}] 完了（色分け適用済）")
 
 if __name__ == "__main__":
     main()
