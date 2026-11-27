@@ -10,12 +10,12 @@ HOST = "https://" + "www." + "jma.go.jp"
 WARNING_URLS = [HOST + "/bosai/warning/data/r8/150000.json", HOST + "/bosai/warning/data/warning/150000.json"]
 FLOOD_URLS = [HOST + "/bosai/flood/data/r8/flood_xml.json", HOST + "/bosai/flood/data/flood_xml.json"]
 
-KIKIKURU_LABEL = {
-    5: "危険度5：災害切迫（黒）",
-    4: "危険度4：危険（紫）",
-    3: "危険度3：警戒（赤）",
-    2: "危険度2：注意（黄）",
-    1: "危険度1：今後の情報に留意",
+LEVEL_LABEL = {
+    5: "レベル5",
+    4: "レベル4",
+    3: "レベル3",
+    2: "レベル2",
+    1: "レベル1",
 }
 
 WARNING_CODES = {
@@ -125,25 +125,25 @@ def get_data():
                                 max_lv = max(max_lv, lv)
                                 c_lv["flood"] = max(c_lv["flood"], lv)
 
-        c_txt = {k: KIKIKURU_LABEL[v] for k, v in c_lv.items()}
-        res[code] = {"max_lv": max_lv, "color": KIKIKURU_LABEL[max_lv], "rep_t": parse_iso(rep_t), "c": c_txt, "text": "、".join(warns) if warns else "発表なし"}
+        c_txt = {k: LEVEL_LABEL[v] for k, v in c_lv.items()}
+        res[code] = {"max_lv": max_lv, "color": LEVEL_LABEL[max_lv], "rep_t": parse_iso(rep_t), "c": c_txt, "text": "、".join(warns) if warns else "発表なし"}
     return res
 
 def rank_of(txt):
-    if "危険度5" in txt or txt.startswith("黒"): return 5
-    if "危険度4" in txt or txt.startswith("紫"): return 4
-    if "危険度3" in txt or txt.startswith("赤"): return 3
-    if "危険度2" in txt or txt.startswith("黄"): return 2
+    if "5" in txt or txt.startswith("黒"): return 5
+    if "4" in txt or txt.startswith("紫"): return 4
+    if "3" in txt or txt.startswith("赤"): return 3
+    if "2" in txt or txt.startswith("黄"): return 2
     return 1
 
 def cell_style(val):
-    if "危険度5" in val or val.startswith("黒"):
+    if val == "レベル5" or "危険度5" in val or val.startswith("黒"):
         return {"backgroundColor": {"red": 0.12, "green": 0.12, "blue": 0.15}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}}
-    if "危険度4" in val or val.startswith("紫"):
+    if val == "レベル4" or "危険度4" in val or val.startswith("紫"):
         return {"backgroundColor": {"red": 0.65, "green": 0.15, "blue": 0.65}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}}
-    if "危険度3" in val or val.startswith("赤"):
+    if val == "レベル3" or "危険度3" in val or val.startswith("赤"):
         return {"backgroundColor": {"red": 0.92, "green": 0.20, "blue": 0.18}, "textFormat": {"foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}, "bold": True}}
-    if "危険度2" in val or val.startswith("黄"):
+    if val == "レベル2" or "危険度2" in val or val.startswith("黄"):
         return {"backgroundColor": {"red": 1.0, "green": 0.93, "blue": 0.25}, "textFormat": {"foregroundColor": {"red": 0.1, "green": 0.1, "blue": 0.1}, "bold": True}}
     if val.startswith("▲"):
         return {"backgroundColor": {"red": 1.0, "green": 0.85, "blue": 0.70}, "textFormat": {"foregroundColor": {"red": 0.7, "green": 0.1, "blue": 0.0}, "bold": True}}
@@ -165,7 +165,7 @@ def main():
             ws = ss.worksheet(city)
         except gspread.WorksheetNotFound:
             ws = ss.add_worksheet(title=city, rows=1000, cols=15)
-            ws.update(values=[[city] + [""]*10, ["取得日時(曜日)", "発表日時(曜日)", "前回危険度", "今回危険度", "変動", "土砂危険度", "浸水危険度", "洪水危険度", "風・波危険度", "その他危険度", "発表内容詳細"]], range_name="A1:K2")
+            ws.update(values=[[city] + [""]*10, ["取得日時(曜日)", "発表日時(曜日)", "前回最大Lv", "今回最大Lv", "変動", "土砂Lv", "浸水Lv", "洪水Lv", "風・波Lv", "その他Lv", "発表内容詳細"]], range_name="A1:K2")
 
         rows = ws.get_all_values()
         last = next((r for r in rows[2:] if pick(r, 0) and not pick(r, 0).startswith("━━")), None)
@@ -188,7 +188,7 @@ def main():
         cols = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"]
         fmt_reqs = [{"range": f"{col}3", "format": cell_style(val)} for col, val in zip(cols, new_row)]
         ws.batch_format(fmt_reqs)
-        print(f"[{city}] 完了（キキクル危険度表記・色分け適用済）")
+        print(f"[{city}] 完了（レベル1〜5表記・色分け適用済）")
 
 if __name__ == "__main__":
     main()
